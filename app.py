@@ -4,9 +4,14 @@ from flask_cors import CORS
 from datetime import datetime, timedelta
 import pyodbc
 import requests
+from flask import Flask
 
 app = Flask(__name__)
-CORS(app)
+
+@app.route("/")
+def home():
+    return "Hello from Flask!"
+
 app.secret_key = "secret"  # Consider moving this to an environment variable
 
 # Configuration
