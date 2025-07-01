@@ -67,13 +67,6 @@ def fetch_weather_data(lat, lon):
             print(f"⚠️ API key failed: {key} - {e}")
     raise Exception("❌ All API keys failed.")
 
-@app.route("/")
-def home():
-    return "This is the home page"
-
-@app.route("/home")
-def home():
-    return "Another route using the same function name"
 
 @app.route("/")
 def home():
