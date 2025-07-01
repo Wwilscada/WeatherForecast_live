@@ -4,17 +4,13 @@ from flask_cors import CORS
 from datetime import datetime, timedelta
 import pyodbc
 import requests
-from flask import Flask
+import os
 
 app = Flask(__name__)
+CORS(app)
+app.secret_key = "secret"  # Move to environment variable in production
 
-@app.route("/")
-def home():
-    return "Hello from Flask!"
-
-app.secret_key = "secret"  # Consider moving this to an environment variable
-
-# Configuration
+# API keys and DB config
 VC_API_KEYS = [
     '6NSHBH2VCR2BPN6WMYRGLL4JX',
     '77EEYBH9HP5EFD3QJ44M7DX39',
@@ -42,6 +38,144 @@ def get_db_connection():
     )
     return pyodbc.connect(conn_str)
 
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+@app.route("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
+
+@app.route("/view_data")
+def view_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM WeatherData2 ORDER BY Createdon DESC")
+    data = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    return render_template("view_data.html", weather_data=data, get_weather_icon=get_weather_icon)
+
+@app.route("/get_filter_hierarchy")
+def get_filter_hierarchy():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT State, LOCNO, PlantNo
+            FROM WeatherData2
+            WHERE State IS NOT NULL AND LOCNO IS NOT NULL AND PlantNo IS NOT NULL
+        """)
+        rows = cursor.fetchall()
+        hierarchy = {}
+        for state, loc, plant in rows:
+            hierarchy.setdefault(state, {}).setdefault(loc, []).append(plant)
+        return jsonify(hierarchy)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route('/get_hourly_forecast')
+def get_hourly_forecast():
+    date = request.args.get('date')
+    locno = request.args.get('locno')
+    plantno = request.args.get('plantno')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT 
+            FORMAT(CAST(ForecastDateTime AS TIME), 'HH:mm') AS Hour,
+            Temp,
+            Conditions
+        FROM WeatherData2
+        WHERE CAST(ForecastDateTime AS DATE) = ?
+          AND LOCNO = ? AND PLANTNO = ?
+        ORDER BY ForecastDateTime
+    """
+    cursor.execute(query, date, locno, plantno)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+
+    result = [{'Hour': r[0], 'Temp': r[1], 'Conditions': r[2]} for i, r in enumerate(rows) if i % 6 == 0]
+    return jsonify(result)
+
+@app.route("/get_weather_by_location", methods=['GET'])
+def get_weather_by_location():
+    locno = request.args.get('locno')
+    plantno = request.args.get('plantno')
+
+    if not locno or not plantno:
+        return jsonify({'error': 'Missing locno or plantno parameter'}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("EXEC dbo.Weather_data @locno=?, @plantno=?", (locno, plantno))
+        columns = [column[0].lower() for column in cursor.description]
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.route("/get_3hour_forecast", methods=['GET'])
+def get_3hour_forecast():
+    locno = request.args.get('locno')
+    plantno = request.args.get('plantno')
+    date = request.args.get('date')  # Format: YYYY-MM-DD
+
+    if not locno or not plantno or not date:
+        return jsonify({'error': 'Missing parameters'}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                FORMAT(ForecastDateTime, 'HH:mm') AS Time,
+                Temp,
+                Conditions,
+                Humidity,
+                Windspeed,
+                WindDir
+            FROM WeatherData2
+            WHERE LOCNO = ? 
+              AND PlantNo = ? 
+              AND CAST(ForecastDateTime AS DATE) = ?
+            ORDER BY ForecastDateTime
+        """, (locno, plantno, date))
+        columns = [column[0] for column in cursor.description]
+        data = [dict(zip(columns, row)) for i, row in enumerate(cursor.fetchall()) if i % 3 == 0]
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        cursor.close()
+        conn.close()
+
+def get_weather_icon(condition):
+    condition = condition.lower()
+    if 'sunny' in condition:
+        return '01d'
+    elif 'partly' in condition or 'cloudy' in condition:
+        return '02d'
+    elif 'rain' in condition:
+        return '09d'
+    elif 'storm' in condition or 'thunder' in condition:
+        return '11d'
+    elif 'snow' in condition:
+        return '13d'
+    elif 'fog' in condition or 'mist' in condition:
+        return '50d'
+    else:
+        return '03d'
+
 def convert_wind_direction(degrees):
     try:
         directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
@@ -67,133 +201,6 @@ def fetch_weather_data(lat, lon):
             print(f"⚠️ API key failed: {key} - {e}")
     raise Exception("❌ All API keys failed.")
 
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-@app.route("/dashboard")
-def dashboard():
-    return render_template("dashboard.html")
-
-def get_weather_icon(condition):
-    condition = condition.lower()
-    if 'sunny' in condition:
-        return '01d'
-    elif 'partly' in condition or 'cloudy' in condition:
-        return '02d'
-    elif 'rain' in condition:
-        return '09d'
-    elif 'storm' in condition or 'thunder' in condition:
-        return '11d'
-    elif 'snow' in condition:
-        return '13d'
-    elif 'fog' in condition or 'mist' in condition:
-        return '50d'
-    else:
-        return '03d'
-
-
-@app.route("/view_data")
-def view_data():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM WeatherData2 ORDER BY Createdon DESC")
-    data = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
-    conn.close()
-    return render_template("view_data.html", weather_data=data, get_weather_icon=get_weather_icon)
-
-
-@app.route("/get_filter_hierarchy")
-def get_filter_hierarchy():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT DISTINCT State, LOCNO, PlantNo
-            FROM WeatherData2
-            WHERE State IS NOT NULL AND LOCNO IS NOT NULL AND PlantNo IS NOT NULL
-        """)
-        rows = cursor.fetchall()
-        hierarchy = {}
-        for state, loc, plant in rows:
-            hierarchy.setdefault(state, {}).setdefault(loc, []).append(plant)
-        return jsonify(hierarchy)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
-@app.route('/get_hourly_forecast')
-def get_hourly_forecast():
-    date = request.args.get('date')
-    locno = request.args.get('locno')
-    plantno = request.args.get('plantno')
-
-    cursor = conn.cursor() # type: ignore
-    query = """
-        SELECT 
-            FORMAT(CAST(ForecastDateTime AS TIME), 'HH:mm') AS Hour,
-            Temp,
-            Conditions
-        FROM WeatherData2
-        WHERE CAST(ForecastDateTime AS DATE) = ?
-          AND LOCNO = ? AND PLANTNO = ?
-        ORDER BY ForecastDateTime
-    """
-    cursor.execute(query, date, locno, plantno)
-    rows = cursor.fetchall()
-    cursor.close()
-
-    # Return every 6th hour (6-hour interval)
-    result = [{'Hour': r[0], 'Temp': r[1], 'Conditions': r[2]} for i, r in enumerate(rows) if i % 6 == 0]
-    return jsonify(result)
-
-
-@app.route("/get_weather_by_location", methods=['GET'])
-def get_weather_by_location():
-    locno = request.args.get('locno')
-    plantno = request.args.get('plantno')
-
-    if not locno or not plantno:
-        return jsonify({'error': 'Missing locno or plantno parameter'}), 400
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("EXEC dbo.Weather_data @locno=?, @plantno=?", (locno, plantno))
-
-        columns = [column[0].lower() for column in cursor.description]
-        rows = []
-        for row in cursor.fetchall():
-            row_dict = dict(zip(columns, row))
-            rows.append({
-                "ForecastDate": row_dict.get("forecastdate") or row_dict.get("forecast_date"),
-    "Temp": row_dict.get("temp"),
-    "TempMin": row_dict.get("tempmin") or row_dict.get("temp_min"),
-    "TempMax": row_dict.get("tempmax") or row_dict.get("temp_max"),
-    "Conditions": row_dict.get("conditions"),
-    "Humidity": row_dict.get("humidity"),
-    "Windspeed": row_dict.get("windspeed"),
-    "WindGust": row_dict.get("windgust"),
-    "WindDir": row_dict.get("winddir"),
-    "Precip": row_dict.get("precip")
-    })
-
-        return jsonify(rows)
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
-
 def save_weather_data():
     try:
         conn = get_db_connection()
@@ -217,7 +224,7 @@ def save_weather_data():
                             INSERT INTO WeatherData2 (
                                 State, LOCNO, PlantNo, Latitude, Longitude, WindSpeed, WindGust,
                                 WindDir, Conditions, Temp, Humidity, Precip,
-                                Createdon, ForecastDateTime
+                                Createdon, ForecastDate
                             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (
                             state, locno, plantno, lat, lon,
@@ -239,65 +246,13 @@ def save_weather_data():
     except Exception as e:
         print(f"[Error] save_weather_data failed: {e}")
     finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
+        cursor.close()
+        conn.close()
 
-
-@app.route("/get_3hour_forecast", methods=['GET'])
-def get_3hour_forecast():
-    locno = request.args.get('locno')
-    plantno = request.args.get('plantno')
-    date = request.args.get('date')  # Format: YYYY-MM-DD
-
-    if not locno or not plantno or not date:
-        return jsonify({'error': 'Missing parameters'}), 400
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT 
-                FORMAT(ForecastDateTime, 'HH:mm') AS Time,
-                Temp,
-                Conditions,
-                Humidity,
-                Windspeed,
-                WindDir
-            FROM WeatherData2
-            WHERE LOCNO = ? 
-                AND PlantNo = ? 
-                AND CAST(ForecastDateTime AS DATE) = ?
-            ORDER BY ForecastDateTime
-        """, (locno, plantno, date))
-        
-        columns = [column[0] for column in cursor.description]
-        # Return every 3 hours
-        data = [
-            dict(zip(columns, row)) 
-            for i, row in enumerate(cursor.fetchall()) 
-            if i % 3 == 0
-        ]
-        return jsonify(data)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-    finally:
-        try:
-            cursor.close()
-            conn.close()
-        except:
-            pass
-
-import os
-DATABASE_URL = os.getenv("postgresql://weather_db_4hts_user:M7duOBKmwg6I3tCPEpgWfdwRH13f9QOv@dpg-d1ft44ali9vc739v24rg-a/weather_db_4hts")
-
-
-# Schedule daily weather data collection at 10:10 AM
+# Enable the following if you want scheduled job on Render
 # scheduler = BackgroundScheduler()
 # scheduler.add_job(save_weather_data, 'cron', hour=10, minute=10)
 # scheduler.start()
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=8097)
+    app.run(debug=False, host="0.0.0.0", port=8097)
