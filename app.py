@@ -69,6 +69,14 @@ def fetch_weather_data(lat, lon):
 
 @app.route("/")
 def home():
+    return "This is the home page"
+
+@app.route("/home")
+def home():
+    return "Another route using the same function name"
+
+@app.route("/")
+def home():
     return render_template("index.html")
 
 @app.route("/dashboard")
