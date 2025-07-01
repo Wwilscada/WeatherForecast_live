@@ -1,16 +1,18 @@
 from flask import Flask, render_template, request, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
 from flask_cors import CORS
+from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 import pyodbc
 import requests
 import os
 
-# ✅ Create only one app instance with template_folder
-app = Flask(__name__, template_folder="templates")
+app = Flask(__name__, template_folder="templates")  # ✅ Correct init
 CORS(app)
-app.secret_key = "secret"  # Move to environment variable in production
+app.secret_key = "secret"  # Consider using environment variables in production
 
+@app.route("/")
+def home():
+    return render_template("index.html")
 
 # API keys and DB config
 VC_API_KEYS = [
