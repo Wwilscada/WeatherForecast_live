@@ -5,17 +5,12 @@ from datetime import datetime, timedelta
 import pyodbc
 import requests
 import os
-from flask import Flask, render_template
 
+# ✅ Create only one app instance with template_folder
 app = Flask(__name__, template_folder="templates")
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-app = Flask(__name__)
 CORS(app)
 app.secret_key = "secret"  # Move to environment variable in production
+
 
 # API keys and DB config
 VC_API_KEYS = [
