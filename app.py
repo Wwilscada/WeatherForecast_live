@@ -10,9 +10,7 @@ app = Flask(__name__, template_folder="templates")  # ✅ Correct init
 CORS(app)
 app.secret_key = "secret"  # Consider using environment variables in production
 
-@app.route("/")
-def home():
-    return render_template("index.html")
+
 
 # API keys and DB config
 VC_API_KEYS = [
