@@ -42,12 +42,15 @@ def get_db_connection():
 
 @app.route("/")
 def home():
-    return render_template("index.html")
-
+    return render_template("index.html")  # It will look in the `templates/` folder
 
 @app.route("/dashboard")
 def dashboard():
     return render_template("dashboard.html")
+
+@app.route("/view_data")
+def view_data():
+    return render_template("view_data.html")
 
 @app.route("/view_data")
 def view_data():
